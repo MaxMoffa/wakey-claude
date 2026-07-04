@@ -4,7 +4,7 @@
   "description": "Pauses a Claude Code session before the 5-hour usage window runs out and schedules a native wakeup to resume automatically when it resets.",
   "main": "cli.js",
   "bin": {
-    "wakey-claude": "./cli.js"
+    "wakey-claude": "cli.js"
   },
   "files": [
     "cli.js",
