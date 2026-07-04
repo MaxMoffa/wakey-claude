@@ -101,7 +101,7 @@ async function install(homeDir, flags) {
     let proceed = flags.force || flags.yes;
     if (!proceed) {
       proceed = await promptYesNo(
-        `An existing statusLine is configured (currently: "${existingCommand}"). Replace it with claude-usage-guard's statusline?`
+        `An existing statusLine is configured (currently: "${existingCommand}"). Replace it with wakey-claude's statusline?`
       );
     }
     if (proceed) {
@@ -127,7 +127,7 @@ async function install(homeDir, flags) {
 
   writeSettings(p.settingsPath, settings);
 
-  console.log('claude-usage-guard install complete:');
+  console.log('wakey-claude install complete:');
   for (const c of changes) console.log(`  - ${c}`);
   console.log('\nRestart Claude Code (or start a new session) for these changes to take effect.');
 }
@@ -166,7 +166,7 @@ function uninstall(homeDir) {
     changes.push(`Removed empty ${p.hooksDir}`);
   }
 
-  console.log('claude-usage-guard uninstall complete:');
+  console.log('wakey-claude uninstall complete:');
   for (const c of changes) console.log(`  - ${c}`);
 }
 
@@ -182,7 +182,7 @@ function status(homeDir) {
   const settings = readSettings(p.settingsPath);
   const threshold = process.env.USAGE_GUARD_THRESHOLD || '95';
 
-  console.log('claude-usage-guard status');
+  console.log('wakey-claude status');
   console.log('------------------------');
   console.log('Installed hooks:');
   console.log(
@@ -223,10 +223,10 @@ function status(homeDir) {
 }
 
 function printUsage() {
-  console.log(`Usage: claude-usage-guard <install|uninstall|status> [--force] [--yes]
+  console.log(`Usage: wakey-claude <install|uninstall|status> [--force] [--yes]
 
   install    Copy hook scripts to ~/.claude/hooks and wire them into ~/.claude/settings.json
-  uninstall  Remove the scripts and settings entries claude-usage-guard added
+  uninstall  Remove the scripts and settings entries wakey-claude added
   status     Show current install state, threshold, and usage-state.json contents
 
 Options:
@@ -251,7 +251,7 @@ async function main() {
       if (command) process.exitCode = 1;
     }
   } catch (err) {
-    console.error(`claude-usage-guard: ${err.message}`);
+    console.error(`wakey-claude: ${err.message}`);
     process.exitCode = 1;
   }
 }

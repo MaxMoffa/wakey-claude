@@ -1,13 +1,13 @@
 {
   "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
-  "name": "claude-usage-guard",
-  "description": "Marketplace for the claude-usage-guard plugin: auto-pause and native-wakeup for the Claude Code 5-hour usage window.",
+  "name": "wakey-claude",
+  "description": "Marketplace for the wakey-claude plugin: auto-pause and native-wakeup for the Claude Code 5-hour usage window.",
   "owner": {
     "name": "Massimo Moffa"
   },
   "plugins": [
     {
-      "name": "claude-usage-guard",
+      "name": "wakey-claude",
       "description": "Pauses a session near the 5-hour usage cap and schedules a native wakeup to resume automatically.",
       "source": "./",
       "category": "productivity"

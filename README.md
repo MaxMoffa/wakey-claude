@@ -1,6 +1,8 @@
-# claude-usage-guard
+# wakey-claude
 
-Never lose a Claude Code session to the 5-hour usage cap. `claude-usage-guard` pauses your
+*"Wakey wakey, it's time for school"* — except it's your 5-hour usage window resetting.
+
+Never lose a Claude Code session to the 5-hour usage cap. `wakey-claude` pauses your
 session right before the limit hits, has Claude checkpoint its progress, and schedules a
 native wakeup to resume automatically once the window resets — no cron, no `at`, no
 external scheduler.
@@ -62,7 +64,7 @@ Three pieces work together:
 ## Install
 
 ```
-npx claude-usage-guard install
+npx wakey-claude install
 ```
 
 This copies `usage-statusline.sh` and `usage-guard.sh` into `~/.claude/hooks/` (chmod
@@ -83,7 +85,7 @@ effect.
 ## Uninstall
 
 ```
-npx claude-usage-guard uninstall
+npx wakey-claude uninstall
 ```
 
 Removes the copied scripts, removes only the `statusLine`/`PreToolUse` entries this tool
@@ -93,7 +95,7 @@ added (anything else in `settings.json` is left alone), and deletes
 ## Status
 
 ```
-npx claude-usage-guard status
+npx wakey-claude status
 ```
 
 Prints whether the hooks/statusLine are installed, the current threshold, and the contents

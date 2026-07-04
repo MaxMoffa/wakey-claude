@@ -1,5 +1,5 @@
 {
-  "name": "claude-usage-guard",
+  "name": "wakey-claude",
   "description": "Pauses a Claude Code session before the 5-hour usage window runs out and schedules a native wakeup to resume automatically when it resets.",
   "version": "0.1.0",
   "author": {
