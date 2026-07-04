@@ -1,0 +1,33 @@
+{
+  "name": "claude-usage-guard",
+  "description": "Pauses a Claude Code session before the 5-hour usage window runs out and schedules a native wakeup to resume automatically when it resets.",
+  "version": "0.1.0",
+  "author": {
+    "name": "Massimo Moffa"
+  },
+  "license": "MIT",
+  "keywords": ["usage", "rate-limit", "hooks", "status-line", "scheduler", "productivity"],
+  "category": "productivity",
+  "engines": {
+    "claudeCode": ">=2.1.72"
+  },
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/scripts/usage-guard.sh\"",
+            "timeout": 10,
+            "statusMessage": "Checking Claude Code usage window..."
+          }
+        ]
+      }
+    ]
+  },
+  "statusLine": {
+    "type": "command",
+    "command": "bash \"${CLAUDE_PLUGIN_ROOT}/scripts/usage-statusline.sh\""
+  }
+}

@@ -1,0 +1,40 @@
+{
+  "name": "claude-usage-guard",
+  "version": "0.1.0",
+  "description": "Pauses a Claude Code session before the 5-hour usage window runs out and schedules a native wakeup to resume automatically when it resets.",
+  "main": "cli.js",
+  "bin": {
+    "claude-usage-guard": "./cli.js"
+  },
+  "files": [
+    "cli.js",
+    "lib",
+    "scripts",
+    ".claude-plugin",
+    "marketplace.json",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "test": "bash test/run-bash-tests.sh && node --test test/*.test.js",
+    "test:sh": "bash test/run-bash-tests.sh",
+    "test:js": "node --test test/*.test.js"
+  },
+  "keywords": [
+    "claude-code",
+    "claude",
+    "usage",
+    "rate-limit",
+    "hooks",
+    "status-line",
+    "scheduler",
+    "productivity"
+  ],
+  "author": {
+    "name": "Massimo Moffa"
+  },
+  "license": "MIT",
+  "engines": {
+    "node": ">=18"
+  }
+}
