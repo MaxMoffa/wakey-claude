@@ -1,19 +1,64 @@
 #!/usr/bin/env bash
 # statusLine sensor: reads Claude Code's status JSON from stdin, prints a
-# one-line summary, and records usage state to disk for usage-guard.sh.
+# one-line summary, and — only when usage crosses the threshold — raises a
+# one-shot flag file for usage-guard.sh to consume.
 #
 # Deliberately no `-u`: several fields (rate_limits, context_window) are
 # legitimately absent (e.g. API-key logins), and treating an unset var as
 # a hard error would crash the status line instead of degrading to "n/a".
 set -eo pipefail
 
-STATE_DIR="${CLAUDE_CONFIG_DIR:-${HOME:-$(cd && pwd)}/.claude}"
-STATE_FILE="$STATE_DIR/usage-state.json"
+CONFIG_DIR="${CLAUDE_CONFIG_DIR:-${HOME:-$(cd && pwd)}/.claude}"
+FLAG_FILE="$CONFIG_DIR/wakey-flag.json"
+# Sole definition of the threshold on the bash side: usage-guard.sh trusts
+# whatever flag this script already wrote and does not re-read this var.
+THRESHOLD="${USAGE_GUARD_THRESHOLD:-95}"
 
 if ! command -v jq >/dev/null 2>&1; then
   printf 'usage-guard: jq not found (install jq)\n'
   exit 0
 fi
+
+# epoch -> ISO8601 UTC, GNU (`date -d @epoch`) then BSD (`date -r epoch`) fallback.
+epoch_to_iso() {
+  local epoch="$1" iso
+  if iso=$(date -u -d "@${epoch}" +"%Y-%m-%dT%H:%M:%SZ" 2>/dev/null); then
+    printf '%s' "$iso"
+    return 0
+  elif iso=$(date -u -r "${epoch}" +"%Y-%m-%dT%H:%M:%SZ" 2>/dev/null); then
+    printf '%s' "$iso"
+    return 0
+  fi
+  return 1
+}
+
+# Contract: one write per window, last-write-wins, account-level shared data.
+# wakey-flag.json is read by every concurrent Claude Code session on this
+# account/window. If a flag already exists for this window's resets_at,
+# leave it alone — usage-guard.sh may have already flipped handled:true, and
+# an unconditional overwrite here would silently re-arm an alarm that
+# already fired. Do not "fix" this into an unconditional overwrite.
+write_flag_if_needed() {
+  local resets_at_iso="$1" usage_int="$2" existing_resets_at=""
+  if [ -f "$FLAG_FILE" ] && jq -e . "$FLAG_FILE" >/dev/null 2>&1; then
+    existing_resets_at=$(jq -r '.resets_at // empty' "$FLAG_FILE" 2>/dev/null)
+  fi
+  [ "$existing_resets_at" = "$resets_at_iso" ] && return 0
+
+  mkdir -p "$CONFIG_DIR"
+  local tmp="$FLAG_FILE.tmp.$$" created_at
+  created_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  if jq -n \
+    --arg resets_at "$resets_at_iso" \
+    --arg usage "$usage_int" \
+    --arg created_at "$created_at" \
+    '{resets_at: $resets_at, usage: ($usage|tonumber), handled: false, created_at: $created_at}' \
+    >"$tmp" 2>/dev/null; then
+    mv -f "$tmp" "$FLAG_FILE"
+  else
+    rm -f "$tmp"
+  fi
+}
 
 input="$(cat)"
 
@@ -45,18 +90,10 @@ else
   fi
   usage_seg=$(printf "5h: ${color}%s%%${RESET}" "$pct_int")
 
-  mkdir -p "$STATE_DIR"
-  TMP_FILE="$STATE_FILE.tmp.$$"
-  updated_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-  if jq -n \
-    --arg usage "$pct_int" \
-    --arg resets_at "$rl_resets_at" \
-    --arg updated_at "$updated_at" \
-    '{usage: ($usage|tonumber), resets_at: $resets_at, updated_at: $updated_at}' \
-    >"$TMP_FILE" 2>/dev/null; then
-    mv -f "$TMP_FILE" "$STATE_FILE"
-  else
-    rm -f "$TMP_FILE"
+  if [ "$pct_int" -ge "$THRESHOLD" ] && [ -n "$rl_resets_at" ]; then
+    if resets_at_iso="$(epoch_to_iso "$rl_resets_at")"; then
+      write_flag_if_needed "$resets_at_iso" "$pct_int"
+    fi
   fi
 fi
 
