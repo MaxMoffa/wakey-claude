@@ -145,7 +145,65 @@ npx wakey-claude status
 ```
 
 Prints whether the hooks/statusLine are installed, the configured threshold, and — if a
-threshold crossing has occurred this window — the contents of `wakey-flag.json`.
+threshold crossing has occurred this window — the contents of `wakey-flag.json`. It also
+always prints a "Scope summary" checking global and (if you're inside one) both project
+scopes, regardless of which flags you passed — so a double install shows up even if you
+only asked about one scope.
+
+## Per-project installation
+
+By default `install`/`uninstall`/`status` operate globally (`~/.claude`). Add `--project`
+to scope them to the current repo instead:
+
+```
+npx wakey-claude install --project          # shared with the team, committed
+npx wakey-claude install --project --local  # personal, gitignored
+```
+
+- **`install`** (no flags) — global, applies to every project you open.
+- **`install --project`** — copies the scripts into `<root>/.claude/hooks/` and merges
+  into `<root>/.claude/settings.json`. Committable — use this to ship the guard/statusline
+  to your whole team via git.
+- **`install --project --local`** — same script copy, but merges into
+  `<root>/.claude/settings.local.json` instead. Not committed — use this if you want the
+  behavior only on your own machine for this repo.
+- `--local` without `--project` is an error.
+- `uninstall` and `status` accept the same flags and operate on the matching scope.
+
+The project root is resolved by walking up from the current directory looking for `.git`
+or an existing `.claude/`. If neither is found, the command fails with a clear message —
+run it inside a project, or use the global install.
+
+Project-scope `settings.json`/`settings.local.json` entries reference the scripts via
+`$CLAUDE_PROJECT_DIR` (e.g. `"$CLAUDE_PROJECT_DIR/.claude/hooks/usage-statusline.sh"`),
+never a resolved absolute path — so they keep working if you move, rename, or clone the
+checkout elsewhere, or run Claude Code from a subdirectory.
+
+`install --project` also appends `.claude/wakey-flag.json` to the project's `.gitignore`
+(creating it if missing) — the flag file is per-project transient state, not something to
+commit. The scripts and settings files themselves are never gitignored.
+
+**Caveats:**
+
+1. **Statusline override** — only one `statusLine` can be active at a time. A
+   project-level `statusLine` replaces any global one *within that project* — this is
+   intended (wakey needs its own sensor running), but it means your fancy global
+   statusline won't show up there. Also note the known deep-merge bug where
+   `settings.local.json` can override global settings in unexpected ways
+   ([anthropics/claude-code#19487](https://github.com/anthropics/claude-code/issues/19487))
+   — this is part of why wakey's hook commands are fully self-contained rather than
+   relying on cross-scope merging.
+2. **Git worktrees** — `$CLAUDE_PROJECT_DIR` points at the worktree, but `.claude/hooks/`
+   scripts live in the checkout they were installed into and may be missing from a new
+   worktree ([anthropics/claude-code#36360](https://github.com/anthropics/claude-code/issues/36360)).
+   For worktree-heavy workflows, prefer the global install, or copy `.claude/` into each
+   new worktree.
+3. **Hook trust** — project hooks committed by a teammate require review/approval on
+   their first session (the `/hooks` menu shows the source: User, Project, or Local).
+   Let your team know to expect that prompt.
+
+`uninstall --project` leaves the `.gitignore` line in place (it's harmless) and says so in
+its output, rather than removing it automatically.
 
 ## Configuration
 

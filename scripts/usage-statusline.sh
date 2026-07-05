@@ -8,7 +8,13 @@
 # a hard error would crash the status line instead of degrading to "n/a".
 set -eo pipefail
 
-CONFIG_DIR="${CLAUDE_CONFIG_DIR:-${HOME:-$(cd && pwd)}/.claude}"
+# keep in sync with usage-guard.sh
+if [ -n "${CLAUDE_PROJECT_DIR:-}" ] && \
+   [ "$(dirname "${BASH_SOURCE[0]:-$0}")" = "$CLAUDE_PROJECT_DIR/.claude/hooks" ]; then
+  CONFIG_DIR="$CLAUDE_PROJECT_DIR/.claude"
+else
+  CONFIG_DIR="${CLAUDE_CONFIG_DIR:-${HOME:-$(cd && pwd)}/.claude}"
+fi
 FLAG_FILE="$CONFIG_DIR/wakey-flag.json"
 # Sole definition of the threshold on the bash side: usage-guard.sh trusts
 # whatever flag this script already wrote and does not re-read this var.

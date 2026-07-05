@@ -6,7 +6,13 @@
 # open (exit 0) - this hook must never accidentally lock a session out.
 set -euo pipefail
 
-CONFIG_DIR="${CLAUDE_CONFIG_DIR:-${HOME:-$(cd && pwd)}/.claude}"
+# keep in sync with usage-statusline.sh
+if [ -n "${CLAUDE_PROJECT_DIR:-}" ] && \
+   [ "$(dirname "${BASH_SOURCE[0]:-$0}")" = "$CLAUDE_PROJECT_DIR/.claude/hooks" ]; then
+  CONFIG_DIR="$CLAUDE_PROJECT_DIR/.claude"
+else
+  CONFIG_DIR="${CLAUDE_CONFIG_DIR:-${HOME:-$(cd && pwd)}/.claude}"
+fi
 FLAG_FILE="$CONFIG_DIR/wakey-flag.json"
 
 [ -f "$FLAG_FILE" ] || exit 0

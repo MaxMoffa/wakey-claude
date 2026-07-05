@@ -14,11 +14,14 @@ const {
   removeStatusLine,
   removePreToolUseHook,
 } = require('../lib/settings-merge');
+const { findProjectRoot } = require('../cli');
 
 const REPO_ROOT = path.join(__dirname, '..');
 const FIXTURES = path.join(__dirname, 'fixtures');
 const OUR_STATUSLINE = '/home/example/.claude/hooks/usage-statusline.sh';
 const OUR_GUARD = '/home/example/.claude/hooks/usage-guard.sh';
+const PROJECT_STATUSLINE = '"$CLAUDE_PROJECT_DIR/.claude/hooks/usage-statusline.sh"';
+const PROJECT_GUARD = '"$CLAUDE_PROJECT_DIR/.claude/hooks/usage-guard.sh"';
 
 function loadFixture(name) {
   return JSON.parse(fs.readFileSync(path.join(FIXTURES, name), 'utf8'));
@@ -146,12 +149,28 @@ function makeFakeHome() {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'cug-home-'));
 }
 
-function runCli(homeDir, args, input) {
+function makeFakeProject() {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'cug-project-'));
+  fs.mkdirSync(path.join(root, '.git'));
+  return root;
+}
+
+function runCli(homeDir, args, input, opts = {}) {
   return execFileSync('node', [path.join(REPO_ROOT, 'cli.js'), ...args], {
     env: { ...process.env, HOME: homeDir },
     input: input || '',
     encoding: 'utf8',
+    cwd: opts.cwd,
   });
+}
+
+function runCliExpectError(homeDir, args, opts = {}) {
+  try {
+    runCli(homeDir, args, null, opts);
+    assert.fail('expected cli to exit with a non-zero status');
+  } catch (err) {
+    return err.stderr;
+  }
 }
 
 test('cli install: creates .bak backup only when settings.json pre-existed', () => {
@@ -210,4 +229,113 @@ test('cli status: reports installed after install, not installed after uninstall
   runCli(home, ['uninstall']);
   const afterUninstall = runCli(home, ['status']);
   assert.match(afterUninstall, /statusLine:\s+missing/);
+});
+
+// --- findProjectRoot ---
+
+test('findProjectRoot: finds nearest ancestor with .git from a nested subdir', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'wc-root-'));
+  fs.mkdirSync(path.join(root, '.git'));
+  const nested = path.join(root, 'a', 'b', 'c');
+  fs.mkdirSync(nested, { recursive: true });
+  assert.equal(findProjectRoot(nested), root);
+});
+
+test('findProjectRoot: finds nearest ancestor with an existing .claude dir', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'wc-root-'));
+  fs.mkdirSync(path.join(root, '.claude'));
+  const nested = path.join(root, 'sub');
+  fs.mkdirSync(nested);
+  assert.equal(findProjectRoot(nested), root);
+});
+
+test('findProjectRoot: neither .git nor .claude anywhere up to filesystem root -> null', () => {
+  const leaf = fs.mkdtempSync(path.join(os.tmpdir(), 'wc-leaf-'));
+  assert.equal(findProjectRoot(leaf), null);
+});
+
+// --- cli.js project-scope integration tests ---
+
+test('cli install --project: writes $CLAUDE_PROJECT_DIR-literal commands, copies scripts under project .claude/hooks', () => {
+  const home = makeFakeHome();
+  const project = makeFakeProject();
+  runCli(home, ['install', '--project', '--yes'], null, { cwd: project });
+
+  const settings = JSON.parse(fs.readFileSync(path.join(project, '.claude', 'settings.json'), 'utf8'));
+  assert.equal(settings.statusLine.command, PROJECT_STATUSLINE);
+  assert.ok(fs.existsSync(path.join(project, '.claude', 'hooks', 'usage-statusline.sh')));
+  assert.ok(fs.existsSync(path.join(project, '.claude', 'hooks', 'usage-guard.sh')));
+  assert.equal(fs.existsSync(path.join(home, '.claude', 'settings.json')), false);
+});
+
+test('cli install --project --local: targets settings.local.json, leaves settings.json untouched', () => {
+  const home = makeFakeHome();
+  const project = makeFakeProject();
+  runCli(home, ['install', '--project', '--yes'], null, { cwd: project });
+  const sharedPath = path.join(project, '.claude', 'settings.json');
+  const sharedBefore = fs.readFileSync(sharedPath, 'utf8');
+
+  runCli(home, ['install', '--project', '--local', '--yes'], null, { cwd: project });
+
+  const localPath = path.join(project, '.claude', 'settings.local.json');
+  const local = JSON.parse(fs.readFileSync(localPath, 'utf8'));
+  assert.equal(local.statusLine.command, PROJECT_STATUSLINE);
+  assert.equal(fs.readFileSync(sharedPath, 'utf8'), sharedBefore);
+});
+
+test('cli install --local (no --project): errors clearly', () => {
+  const home = makeFakeHome();
+  const stderr = runCliExpectError(home, ['install', '--local', '--yes']);
+  assert.match(stderr, /--local requires --project/);
+});
+
+test('cli install --project: outside any project errors clearly', () => {
+  const home = makeFakeHome();
+  const outside = fs.mkdtempSync(path.join(os.tmpdir(), 'cug-outside-'));
+  const stderr = runCliExpectError(home, ['install', '--project', '--yes'], { cwd: outside });
+  assert.match(stderr, /Run inside a project, or use the global install/);
+});
+
+test('cli install --project: appends .claude/wakey-flag.json to .gitignore, stays deduped on repeat', () => {
+  const home = makeFakeHome();
+  const project = makeFakeProject();
+  runCli(home, ['install', '--project', '--yes'], null, { cwd: project });
+
+  const gitignorePath = path.join(project, '.gitignore');
+  assert.match(fs.readFileSync(gitignorePath, 'utf8'), /^\.claude\/wakey-flag\.json$/m);
+
+  runCli(home, ['install', '--project', '--yes'], null, { cwd: project });
+  const lines = fs.readFileSync(gitignorePath, 'utf8').split('\n');
+  const occurrences = lines.filter((l) => l.trim() === '.claude/wakey-flag.json').length;
+  assert.equal(occurrences, 1);
+});
+
+test('cli status: reports both global and project scopes when both installed, warns on double-install', () => {
+  const home = makeFakeHome();
+  const project = makeFakeProject();
+  runCli(home, ['install', '--yes']);
+  runCli(home, ['install', '--project', '--yes'], null, { cwd: project });
+
+  const out = runCli(home, ['status'], null, { cwd: project });
+  assert.match(out, /global: installed/);
+  assert.match(out, /project \(shared\): installed/);
+  assert.match(out, /Warning: installed in multiple scopes/);
+});
+
+test('cli uninstall --project: shared uninstall leaves scripts and local settings intact while local install is still active', () => {
+  const home = makeFakeHome();
+  const project = makeFakeProject();
+  runCli(home, ['install', '--project', '--yes'], null, { cwd: project });
+  runCli(home, ['install', '--project', '--local', '--yes'], null, { cwd: project });
+
+  runCli(home, ['uninstall', '--project'], null, { cwd: project });
+
+  assert.ok(fs.existsSync(path.join(project, '.claude', 'hooks', 'usage-statusline.sh')));
+  assert.ok(fs.existsSync(path.join(project, '.claude', 'hooks', 'usage-guard.sh')));
+
+  const shared = JSON.parse(fs.readFileSync(path.join(project, '.claude', 'settings.json'), 'utf8'));
+  assert.equal(shared.statusLine, undefined);
+
+  const local = JSON.parse(fs.readFileSync(path.join(project, '.claude', 'settings.local.json'), 'utf8'));
+  assert.equal(local.statusLine.command, PROJECT_STATUSLINE);
 });

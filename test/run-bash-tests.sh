@@ -41,6 +41,18 @@ new_fake_home() {
   printf '%s' "$dir"
 }
 
+# A fake project dir with the scripts already "installed" under
+# .claude/hooks/, so the self-location check in both scripts sees them as
+# project-scoped.
+new_fake_project() {
+  local dir
+  dir="$(mktemp -d)"
+  mkdir -p "$dir/.claude/hooks"
+  cp "$GUARD" "$dir/.claude/hooks/usage-guard.sh"
+  cp "$STATUSLINE" "$dir/.claude/hooks/usage-statusline.sh"
+  printf '%s' "$dir"
+}
+
 write_flag() {
   local home="$1" resets_at="$2" usage="$3" handled="$4" created_at="${5:-$(now_iso)}"
   jq -n \
@@ -315,6 +327,70 @@ fixed_epoch=$(date -u -d '2030-01-01T14:07:00Z' +%s)
 out=$(run_statusline "$home" "{\"model\":{\"display_name\":\"M\"},\"rate_limits\":{\"five_hour\":{\"used_percentage\":10,\"resets_at\":$fixed_epoch}}}")
 assert_contains "reset time: correct HH:MM" "$out" "resets 14:07"
 unset TZ
+
+echo "=== CLAUDE_PROJECT_DIR precedence ==="
+
+# 1. statusline "installed" at project scope -> flag written under the
+#    project dir, not under $HOME.
+home="$(new_fake_home)"
+proj="$(new_fake_project)"
+resets="$(epoch_plus '2 hours')"
+(
+  export HOME="$home"
+  printf '%s' "{\"model\":{\"display_name\":\"M\"},\"rate_limits\":{\"five_hour\":{\"used_percentage\":97,\"resets_at\":$resets}}}" \
+    | CLAUDE_PROJECT_DIR="$proj" bash "$proj/.claude/hooks/usage-statusline.sh"
+) >/dev/null 2>&1
+if [ -f "$proj/.claude/wakey-flag.json" ]; then
+  pass "project scope statusline: flag written under project dir"
+else
+  fail "project scope statusline: flag written under project dir"
+fi
+if [ -f "$(flag_file "$home")" ]; then
+  fail "project scope statusline: flag NOT written under global home"
+else
+  pass "project scope statusline: flag NOT written under global home"
+fi
+
+# 2. guard "installed" at project scope -> reads/writes the project flag,
+#    still blocks with exit 2 exactly like the global-scope case.
+home="$(new_fake_home)"
+proj="$(new_fake_project)"
+resets_iso_p="$(iso_plus '2 hours')"
+jq -n --arg resets_at "$resets_iso_p" \
+  '{resets_at: $resets_at, usage: 97, handled: false, created_at: "2020-01-01T00:00:00Z"}' \
+  >"$proj/.claude/wakey-flag.json"
+out=$(
+  export HOME="$home"
+  CLAUDE_PROJECT_DIR="$proj" bash "$proj/.claude/hooks/usage-guard.sh" 2>&1
+); code=$?
+assert_eq "project scope guard: exit 2" "2" "$code"
+assert_contains "project scope guard: mentions PROGRESS.md" "$out" "PROGRESS.md"
+handled_after=$(jq -r '.handled' "$proj/.claude/wakey-flag.json")
+assert_eq "project scope guard: handled flipped to true in project flag" "true" "$handled_after"
+
+# 3. regression guard: CLAUDE_PROJECT_DIR is set, but the running script is
+#    NOT physically under <project>/.claude/hooks (e.g. a global install, or
+#    running straight out of the repo checkout) -> must fall back to the
+#    global $HOME resolution, not silently move to the project dir. This is
+#    the exact regression the self-location check exists to prevent.
+home="$(new_fake_home)"
+proj="$(new_fake_project)"
+resets="$(epoch_plus '2 hours')"
+(
+  export HOME="$home"
+  printf '%s' "{\"model\":{\"display_name\":\"M\"},\"rate_limits\":{\"five_hour\":{\"used_percentage\":97,\"resets_at\":$resets}}}" \
+    | CLAUDE_PROJECT_DIR="$proj" bash "$STATUSLINE"
+) >/dev/null 2>&1
+if [ -f "$(flag_file "$home")" ]; then
+  pass "regression guard: CLAUDE_PROJECT_DIR set but script not under project hooks -> falls back to global"
+else
+  fail "regression guard: CLAUDE_PROJECT_DIR set but script not under project hooks -> falls back to global"
+fi
+if [ -f "$proj/.claude/wakey-flag.json" ]; then
+  fail "regression guard: flag incorrectly written under project dir"
+else
+  pass "regression guard: flag incorrectly written under project dir"
+fi
 
 echo
 echo "-------------------------"
