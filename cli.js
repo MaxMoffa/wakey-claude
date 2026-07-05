@@ -23,8 +23,7 @@ function getPaths(homeDir) {
     claudeDir,
     hooksDir,
     settingsPath: path.join(claudeDir, 'settings.json'),
-    stateFile: path.join(claudeDir, 'usage-state.json'),
-    lockFile: path.join(claudeDir, 'usage-guard.lock'),
+    flagFile: path.join(claudeDir, 'wakey-flag.json'),
     statuslineSrc: path.join(__dirname, 'scripts', 'usage-statusline.sh'),
     guardSrc: path.join(__dirname, 'scripts', 'usage-guard.sh'),
     statuslineDest,
@@ -154,7 +153,7 @@ function uninstall(homeDir) {
     changes.push('No settings.json found (nothing to update)');
   }
 
-  for (const f of [p.statuslineDest, p.guardDest, p.stateFile, p.lockFile]) {
+  for (const f of [p.statuslineDest, p.guardDest, p.flagFile]) {
     if (fs.existsSync(f)) {
       fs.rmSync(f, { force: true });
       changes.push(`Removed ${f}`);
@@ -168,13 +167,6 @@ function uninstall(homeDir) {
 
   console.log('wakey-claude uninstall complete:');
   for (const c of changes) console.log(`  - ${c}`);
-}
-
-function formatAge(updatedAt) {
-  const updatedMs = Date.parse(updatedAt);
-  if (Number.isNaN(updatedMs)) return 'unknown';
-  const ageMin = Math.round((Date.now() - updatedMs) / 60000);
-  return `${ageMin}m ago${ageMin > 30 ? ' (STALE)' : ''}`;
 }
 
 function status(homeDir) {
@@ -200,25 +192,18 @@ function status(homeDir) {
   );
   console.log(`Threshold: ${threshold}%`);
 
-  console.log(`State file (${p.stateFile}):`);
-  if (fs.existsSync(p.stateFile)) {
+  console.log(`Flag file (${p.flagFile}):`);
+  if (fs.existsSync(p.flagFile)) {
     try {
-      const state = JSON.parse(fs.readFileSync(p.stateFile, 'utf8'));
+      const flag = JSON.parse(fs.readFileSync(p.flagFile, 'utf8'));
       console.log(
-        `  usage: ${state.usage}%   resets_at: ${state.resets_at}   updated_at: ${state.updated_at}   age: ${formatAge(state.updated_at)}`
+        `  resets_at: ${flag.resets_at}   usage: ${flag.usage}%   handled: ${flag.handled}   created_at: ${flag.created_at}`
       );
     } catch {
-      console.log('  (could not parse state file)');
+      console.log('  (could not parse flag file)');
     }
   } else {
-    console.log('  not found (no statusline data recorded yet)');
-  }
-
-  console.log(`Lock file (${p.lockFile}):`);
-  if (fs.existsSync(p.lockFile)) {
-    console.log(`  resets_at: ${fs.readFileSync(p.lockFile, 'utf8')}`);
-  } else {
-    console.log('  not set');
+    console.log('  not set (usage has not crossed the threshold this window)');
   }
 }
 
@@ -227,7 +212,7 @@ function printUsage() {
 
   install    Copy hook scripts to ~/.claude/hooks and wire them into ~/.claude/settings.json
   uninstall  Remove the scripts and settings entries wakey-claude added
-  status     Show current install state, threshold, and usage-state.json contents
+  status     Show current install state, threshold, and wakey-flag.json contents
 
 Options:
   --force    Replace an existing statusLine without prompting

@@ -181,18 +181,19 @@ test('cli install: copies both scripts and chmods them 0o755', () => {
   assert.equal(fs.statSync(guardPath).mode & 0o777, 0o755);
 });
 
-test('cli uninstall: removes usage-state.json and lock, leaves other files untouched', () => {
+test('cli uninstall: removes wakey-flag.json, leaves other files untouched', () => {
   const home = makeFakeHome();
   runCli(home, ['install', '--yes']);
   const claudeDir = path.join(home, '.claude');
-  fs.writeFileSync(path.join(claudeDir, 'usage-state.json'), '{"usage":1}');
-  fs.writeFileSync(path.join(claudeDir, 'usage-guard.lock'), '123');
+  fs.writeFileSync(
+    path.join(claudeDir, 'wakey-flag.json'),
+    '{"resets_at":"2030-01-01T00:00:00Z","usage":97,"handled":false,"created_at":"2030-01-01T00:00:00Z"}'
+  );
   fs.writeFileSync(path.join(claudeDir, 'unrelated-file.txt'), 'keep me');
 
   runCli(home, ['uninstall']);
 
-  assert.equal(fs.existsSync(path.join(claudeDir, 'usage-state.json')), false);
-  assert.equal(fs.existsSync(path.join(claudeDir, 'usage-guard.lock')), false);
+  assert.equal(fs.existsSync(path.join(claudeDir, 'wakey-flag.json')), false);
   assert.ok(fs.existsSync(path.join(claudeDir, 'unrelated-file.txt')));
 });
 

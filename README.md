@@ -31,57 +31,81 @@ external scheduler.
 
 ## How it works
 
+This is an event-based design: nothing is written to disk until usage actually crosses the
+threshold, and the file that gets written is a one-shot alarm, not continuously-updated
+state.
+
 Three pieces work together:
 
 1. **`usage-statusline.sh`** (a `statusLine` command) reads Claude Code's status JSON on
-   every render and writes the current usage % / reset time to `~/.claude/usage-state.json`.
-2. **`usage-guard.sh`** (a `PreToolUse` hook) reads that state file before every tool call.
-   Once usage crosses a threshold (default 95%), it blocks the tool call *once* and tells
-   Claude, via the blocked-call feedback, to checkpoint its progress and schedule a native
-   one-time wakeup.
+   every render and displays it as usual. It only touches disk when
+   `rate_limits.five_hour.used_percentage` crosses the threshold (default 95%) — at that
+   point it raises a flag by writing `~/.claude/wakey-flag.json`. Below threshold, and on
+   every render after the flag for the current window already exists, it writes nothing.
+2. **`usage-guard.sh`** (a `PreToolUse` hook) is a dumb one-shot consumer: if the flag file
+   doesn't exist, it's a no-op. If it exists and hasn't been handled yet, it blocks the tool
+   call *once*, marks the flag `handled`, and tells Claude, via the blocked-call feedback, to
+   checkpoint its progress and schedule a native one-time wakeup. If the flag is already
+   `handled`, or its window has already reset, the guard passes through (deleting an expired
+   flag as it goes).
 3. Claude writes `PROGRESS.md`, schedules the wakeup for reset time + 3 minutes, and stops.
    When the wakeup fires, Claude reads `PROGRESS.md` and resumes exactly where it left off.
 
+### Flag file lifecycle
+
+`~/.claude/wakey-flag.json` moves through three states over a 5-hour window:
+
 ```
-┌──────────────────────┐   every render    ┌────────────────────────────┐
-│  usage-statusline.sh  │ ────────────────▶ │ ~/.claude/usage-state.json │
-│   (statusLine hook)   │  usage, resets_at │  {usage, resets_at,        │
-│                       │  updated_at       │   updated_at}              │
-└───────────────────────┘                   └─────────────┬──────────────┘
-                                                            │ read
-                                                            ▼
-                                              ┌────────────────────────────┐
-                                              │      usage-guard.sh        │
-                                              │ (PreToolUse, every call)   │
-                                              └─────────────┬──────────────┘
-                                                             │
-                        usage < threshold, stale,            │  usage >= threshold
-                        or already blocked this window        │  AND lock != resets_at
-                                                             │
-                              ┌──────────────────────────────┴────────────────────────┐
-                              ▼                                                       ▼
-                        exit 0 (pass)                                     write lock(resets_at)
-                                                                           exit 2 + stderr:
-                                                                           "write PROGRESS.md,
-                                                                            schedule native wakeup
-                                                                            at resets_at + 3m,
-                                                                            stop new work"
-                                                                                     │
-                                                                                     ▼
-                                                                 Claude writes PROGRESS.md,
-                                                                 schedules a native one-time
-                                                                 wakeup for resets_at + 3m
-                                                                                     │
-                                                                (session process stays alive,
-                                                                     waiting for wakeup)
-                                                                                     ▼
-                                                                  ── 5h window resets ──
-                                                                                     │
-                                                                                     ▼
-                                                                  native wakeup fires ->
-                                                                  Claude reads PROGRESS.md
-                                                                  -> resumes where it left off
+        usage < threshold
+        (no flag file exists)
+                 │
+                 │ statusline: used_percentage >= THRESHOLD,
+                 │ no existing flag has this resets_at
+                 ▼
+   ┌─────────────────────────────┐
+   │           WRITTEN           │  { resets_at: ISO8601,
+   │   handled: false            │    usage: int,
+   │                             │    handled: false,
+   └───────────────┬─────────────┘    created_at: ISO8601 }
+                    │
+   ┌────────────────┴─────────────────────────┐
+   │ statusline re-renders, SAME resets_at:    │  guard runs (PreToolUse):
+   │ write is skipped (dedup guard — never     │  resets_at still in the
+   │ clobbers handled back to false)           │  future, handled == false
+   ▼                                           ▼
+ (no-op, flag unchanged)             ┌────────────────────────┐
+                                      │        HANDLED          │
+                                      │  handled -> true        │
+                                      │  exit 2 + stderr:        │
+                                      │  "write PROGRESS.md,     │
+                                      │   schedule native wakeup │
+                                      │   at resets_at + 3m,     │
+                                      │   stop new work"         │
+                                      └────────────┬─────────────┘
+                                                   │
+                               further PreToolUse calls this window:
+                               handled == true -> exit 0 (pass through)
+                                                   │
+                                      ── 5h window resets ──
+                                                   │
+                                                   ▼
+                                   guard (or the next threshold
+                                   crossing) sees resets_at <= now
+                                                   │
+                                                   ▼
+                                         ┌────────────────┐
+                                         │    DELETED      │
+                                         │ (window reset)  │
+                                         └────────────────┘
+                                                   │
+                             next threshold crossing writes a
+                             fresh flag for the new window
 ```
+
+Corrupt or unparseable flag contents are treated as "expired" by the guard (deleted, fail
+open) and as "no flag" by the statusline's dedup check (overwritten) — a broken flag can't
+serve as either an alarm or a dedup key, and the statusline runs far more often than the
+guard, so it self-heals the file on its next render.
 
 ## Install
 
@@ -112,7 +136,7 @@ npx wakey-claude uninstall
 
 Removes the copied scripts, removes only the `statusLine`/`PreToolUse` entries this tool
 added (anything else in `settings.json` is left alone), and deletes
-`~/.claude/usage-state.json` and `~/.claude/usage-guard.lock`.
+`~/.claude/wakey-flag.json`.
 
 ## Status
 
@@ -120,14 +144,16 @@ added (anything else in `settings.json` is left alone), and deletes
 npx wakey-claude status
 ```
 
-Prints whether the hooks/statusLine are installed, the current threshold, and the contents
-of the state/lock files.
+Prints whether the hooks/statusLine are installed, the configured threshold, and — if a
+threshold crossing has occurred this window — the contents of `wakey-flag.json`.
 
 ## Configuration
 
-`USAGE_GUARD_THRESHOLD` (default `95`) — the 5-hour usage % at which the guard blocks. This
-is a **process environment variable**, not a `settings.json` field — export it in the shell
-profile that launches `claude` (e.g. `export USAGE_GUARD_THRESHOLD=90` in `.bashrc`/`.zshrc`).
+`USAGE_GUARD_THRESHOLD` (default `95`) — the 5-hour usage % at which the statusline raises
+the flag (the guard hook trusts whatever flag the statusline already wrote and does not
+re-check this value). This is a **process environment variable**, not a `settings.json`
+field — export it in the shell profile that launches `claude` (e.g.
+`export USAGE_GUARD_THRESHOLD=90` in `.bashrc`/`.zshrc`).
 
 ## Install methods: CLI vs. plugin
 
@@ -148,16 +174,17 @@ Use one or the other, not both — running both would register the `PreToolUse` 
   logins. API-key-based auth shows `n/a` in the status line and the guard never triggers
   (there's nothing to compare against).
 - Not meaningful in headless or CI environments — there's no interactive session to pause
-  or resume, and no statusline render loop driving state updates.
-- The guard blocks only once per 5-hour window by design (lock-file dedup keyed on
-  `resets_at`).
+  or resume, and no statusline render loop to raise the flag.
+- The guard blocks only once per 5-hour window by design (the flag's `handled` boolean is
+  the dedup mechanism — see the flag file lifecycle above).
 
 ## Troubleshooting
 
 - **Status line shows `n/a`** — check your login type; `rate_limits` data requires a
   Pro/Max subscription login, not an API key.
 - **Guard never triggers** — check `USAGE_GUARD_THRESHOLD`, and run `status` to confirm
-  `~/.claude/usage-state.json` is being updated and isn't stale (older than 30 minutes).
+  `~/.claude/wakey-flag.json` exists once usage crosses the threshold, and that its
+  `resets_at` is in the future.
 - **`jq: command not found`** — install `jq` (both scripts depend on it and degrade
   gracefully, but usage tracking won't work without it).
 - **Hook not firing at all** — run `status` to confirm `settings.json` has the
@@ -166,9 +193,8 @@ Use one or the other, not both — running both would register the `PreToolUse` 
   `PROGRESS.md` was actually written, and confirm the native scheduled task was actually
   created.
 - **Manual cleanup** — if the CLI is unavailable, you can always remove
-  `~/.claude/usage-state.json` and `~/.claude/usage-guard.lock` by hand, and edit
-  `~/.claude/settings.json` to drop the `statusLine`/`PreToolUse` entries pointing at
-  `~/.claude/hooks/usage-*.sh`.
+  `~/.claude/wakey-flag.json` by hand, and edit `~/.claude/settings.json` to drop the
+  `statusLine`/`PreToolUse` entries pointing at `~/.claude/hooks/usage-*.sh`.
 
 ## License
 
