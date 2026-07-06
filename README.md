@@ -213,16 +213,6 @@ re-check this value). This is a **process environment variable**, not a `setting
 field — export it in the shell profile that launches `claude` (e.g.
 `export USAGE_GUARD_THRESHOLD=90` in `.bashrc`/`.zshrc`).
 
-## Install methods: CLI vs. plugin
-
-You can install either via the `npx` CLI above, or as a Claude Code plugin:
-
-```
-/plugin marketplace add <this repo>
-```
-
-Use one or the other, not both — running both would register the `PreToolUse` hook twice.
-
 ## Limitations
 
 - The Claude Code session process must stay alive for the scheduled wakeup to fire. PC
